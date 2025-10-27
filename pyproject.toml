@@ -1,0 +1,17 @@
+[project]
+name = "web-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "exa-py>=1.16.1",
+    "google-genai>=1.45.0",
+    "instructor>=1.11.3",
+    "openai>=1.109.1",
+    "pydantic>=2.12.2",
+    "requests>=2.32.5",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "tiktoken>=0.7.0",
+]
