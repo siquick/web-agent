@@ -3,7 +3,7 @@
 from . import prompts, system_prompts, utils, token_utils
 from .llm import (
     DEFAULT_CHAT_MODEL,
-    HF_ROUTER_MODEL,
+    ROUTER_MODEL,
     conversation_summary_update,
     is_supported_chat_model,
     llm_call,
@@ -12,7 +12,7 @@ from .llm import (
 
 __all__ = [
     "DEFAULT_CHAT_MODEL",
-    "HF_ROUTER_MODEL",
+    "ROUTER_MODEL",
     "conversation_summary_update",
     "is_supported_chat_model",
     "llm_call",

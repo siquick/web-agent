@@ -15,9 +15,21 @@ from web_agent.ai.token_utils import count_tokens, trim_to_tokens
 
 load_dotenv()
 
-HF_ROUTER_BASE_URL = "https://router.huggingface.co/v1"
-HF_ROUTER_MODEL = os.environ.get("HF_ROUTER_MODEL", "Qwen/Qwen3-32B:cerebras")
-DEFAULT_CHAT_MODEL = HF_ROUTER_MODEL
+## Huggingface
+# ROUTER_BASE_URL = "https://router.huggingface.co/v1"
+# ROUTER_MODEL = os.environ.get("ROUTER_MODEL", "Qwen/Qwen3-32B:groq")
+# ROUTER_KEY = os.environ.get("HF_TOKEN")
+
+## Ollama local
+# ROUTER_BASE_URL = "http://localhost:11434/v1/"
+# ROUTER_MODEL = "qwen3:1.7b"
+
+## Openrouter
+ROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+ROUTER_MODEL = "qwen/qwen3-32b"
+ROUTER_KEY = os.environ.get("OPENROUTER_API_KEY")
+
+DEFAULT_CHAT_MODEL = ROUTER_MODEL
 
 MAX_CONTEXT_TOKENS = 65536
 SUMMARY_TOKEN_RATIO = 0.3
@@ -26,10 +38,12 @@ SUMMARY_TOKEN_LIMIT = int(MAX_CONTEXT_TOKENS * SUMMARY_TOKEN_RATIO)
 
 @lru_cache
 def get_huggingface_client() -> OpenAI:
-    token = os.environ.get("HF_TOKEN")
+    token = ROUTER_KEY
     if not token:
-        raise RuntimeError("HF_TOKEN must be set to use the Hugging Face router.")
-    return OpenAI(base_url=HF_ROUTER_BASE_URL, api_key=token)
+        raise RuntimeError(
+            "HF_TOKEN or OPENROUTER_API_KEY must be set to use the Hugging Face / Openrouter router."
+        )
+    return OpenAI(base_url=ROUTER_BASE_URL, api_key=token)
 
 
 def is_supported_chat_model(model: str) -> bool:

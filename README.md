@@ -50,14 +50,16 @@ FastAPI service that wraps a lightweight agent capable of web-grounded research 
 - API credentials:
   - `HF_TOKEN` – Hugging Face Inference API token with access to your chosen hosted model
   - `EXA_API_KEY` – Exa search key (for web tool)
+  - 'OPENROUTER_API_KEY' - Openrouter API key with access to your chosen modek
   - Any additional tool keys you enable
+  - Note you need atleast one of HF_TOKEN or OPENROUTER_API_KEY
 
 Create a `.env` (already gitignored) to populate the tokens, for example:
 
 ```
 HF_TOKEN=hf_xxx
-HF_ROUTER_MODEL=Qwen/Qwen3-32B:groq  # any model from https://huggingface.co/inference/models
 EXA_API_KEY=exa_xxx
+OPENROUTER_API_KEY=
 ```
 
 ---
@@ -135,9 +137,13 @@ Environment overrides (add to `web-ui/.env` or export before running Vite):
 
 ### Model Configuration
 
-- The server reads `HF_ROUTER_MODEL` to decide which Hugging Face-hosted model to call; defaults to `Qwen/Qwen3-32B:cerebras`.
-- Any model listed under [huggingface.co/inference/models](https://huggingface.co/inference/models) that supports the `chat/completions` endpoint can be used.
-- Update both the server environment and the client request payload (`model` field) to the same value to avoid validation errors.
+- The API speaks the OpenAI `chat/completions` schema end‑to‑end. You can point it at any router or gateway that exposes that surface: Hugging Face Inference, OpenRouter, Ollama, or a self-hosted OpenAI-compatible stack.
+- Configure the backend by wiring the environment variables consumed in `web_agent/ai/llm.py`. Examples:
+  - **OpenRouter** – set `ROUTER_BASE_URL=https://openrouter.ai/api/v1`, `ROUTER_MODEL=qwen/qwen3-32b`, and `OPENROUTER_API_KEY=<token>`.
+  - **Hugging Face Router** – set `ROUTER_BASE_URL=https://router.huggingface.co/v1`, `ROUTER_MODEL=Qwen/Qwen3-32B:groq`, and `ROUTER_KEY=HF_TOKEN`.
+  - **Ollama (local)** – set `ROUTER_BASE_URL=http://127.0.0.1:11434/v1`, `ROUTER_MODEL=qwen3:1.7b`, and leave the key blank.
+- Whatever router you choose, keep the `model` parameter sent by the CLI/web UI in sync with `ROUTER_MODEL` to avoid validation errors.
+- Because the interface is standardised, swapping providers usually means updating `ROUTER_BASE_URL`, `ROUTER_MODEL`, and the token—no code changes required.
 
 ---
 
@@ -166,6 +172,6 @@ Environment overrides (add to `web-ui/.env` or export before running Vite):
 
 ### Notes
 
-- Model traffic routes through Hugging Face’s OpenAI-compatible REST API. Set `HF_ROUTER_MODEL` (defaults to `Qwen/Qwen3-32B:cerebras`) to any model listed in the [Hugging Face Inference catalog](https://huggingface.co/inference/models) that supports the chat completions interface.
+- Model traffic routes through Hugging Face’s OpenAI-compatible REST API. Set `ROUTER_MODEL` (defaults to `Qwen/Qwen3-32B:cerebras`) to any model listed in the [Hugging Face Inference catalog](https://huggingface.co/inference/models) that supports the chat completions interface.
 - Reflection is constrained to a single additional turn to limit token and cost overhead. Tune `max_reflection_rounds` on `ToolUseAgent` if you need deeper self-critique.
 - Summaries are only generated after a minimum conversation length to save tokens on short interactions.
