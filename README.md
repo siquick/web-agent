@@ -1,6 +1,6 @@
 ## Web Agent API
 
-FastAPI service that wraps a lightweight agent capable of web-grounded research using the Qwen/Qwen3-32B model routed through Hugging Face’s OpenAI-compatible APIs. It exposes OpenAI-style `/v1/query` and `/v1/chat` endpoints, plus a CLI for conversational testing.
+FastAPI service that wraps a lightweight agent capable of web-grounded research using models served via Hugging Face’s OpenAI-compatible router. It exposes OpenAI-style `/v1/query` and `/v1/chat` endpoints, plus a CLI for conversational testing.
 
 ---
 
@@ -39,7 +39,7 @@ FastAPI service that wraps a lightweight agent capable of web-grounded research 
 - Python 3.12+
 - [`uv`](https://github.com/astral-sh/uv) for dependency and environment management
 - API credentials:
-  - `HF_TOKEN` – Hugging Face Inference API token with access to `Qwen/Qwen3-32B:*`
+  - `HF_TOKEN` – Hugging Face Inference API token with access to your chosen hosted model
   - `EXA_API_KEY` – Exa search key (for web tool)
   - Any additional tool keys you enable
 
@@ -47,6 +47,7 @@ Create a `.env` (already gitignored) to populate the tokens, for example:
 
 ```
 HF_TOKEN=hf_xxx
+HF_ROUTER_MODEL=Qwen/Qwen3-32B:groq  # any model from https://huggingface.co/inference/models
 EXA_API_KEY=exa_xxx
 ```
 
@@ -83,7 +84,7 @@ OpenAPI-style requests (example with curl):
 curl -X POST http://127.0.0.1:8000/v1/chat \
   -H "Content-Type: application/json" \
   -d '{
-        "model": "Qwen/Qwen3-32B:cerebras",
+        "model": "Qwen/Qwen3-32B:groq",
         "messages": [
           {"role": "system", "content": "You are a helpful assistant."},
           {"role": "user", "content": "Summarise the latest MPC news."}
@@ -101,6 +102,14 @@ make chat
 ```
 
 Configure `WEB_AGENT_API_URL` or `WEB_AGENT_SYSTEM_PROMPT` in `.env` to point the CLI at remote deployments or override the persona.
+
+---
+
+### Model Configuration
+
+- The server reads `HF_ROUTER_MODEL` to decide which Hugging Face-hosted model to call; defaults to `Qwen/Qwen3-32B:cerebras`.
+- Any model listed under [huggingface.co/inference/models](https://huggingface.co/inference/models) that supports the `chat/completions` endpoint can be used.
+- Update both the server environment and the client request payload (`model` field) to the same value to avoid validation errors.
 
 ---
 
@@ -125,8 +134,6 @@ Configure `WEB_AGENT_API_URL` or `WEB_AGENT_SYSTEM_PROMPT` in `.env` to point th
 
 ### Notes
 
-- All model traffic routes through Hugging Face’s OpenAI-compatible REST API; adjust `HF_ROUTER_MODEL` in environment variables if you wish to target another deployment (e.g., `Qwen/Qwen3-32B:groq`).
+- Model traffic routes through Hugging Face’s OpenAI-compatible REST API. Set `HF_ROUTER_MODEL` (defaults to `Qwen/Qwen3-32B:cerebras`) to any model listed in the [Hugging Face Inference catalog](https://huggingface.co/inference/models) that supports the chat completions interface.
 - Reflection is constrained to a single additional turn to limit token and cost overhead. Tune `max_reflection_rounds` on `ToolUseAgent` if you need deeper self-critique.
 - Summaries are only generated after a minimum conversation length to save tokens on short interactions.
-
-Enjoy building on top of the agent! Contributions welcome.
