@@ -9,7 +9,8 @@ import { Textarea } from "../ui/textarea";
 import { ChatMessageBubble } from "./chat-message-bubble";
 import type { ChatMessage, MessageMetadata } from "./types";
 
-const DEFAULT_SYSTEM_PROMPT = "You are a helpful research assistant. Cite sources when possible.";
+const DEFAULT_SYSTEM_PROMPT =
+  "You are a helpful research assistant. Cite sources when possible. Respond using GitHub-flavored Markdown and prefer tables when comparing options.";
 const DEFAULT_MODEL = "Qwen/Qwen3-32B:cerebras";
 const TOOLTIP_LABEL = "Clear conversation";
 
@@ -248,10 +249,8 @@ export function ChatPanel() {
       <CardContent className="flex h-full flex-col gap-6 p-6">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold tracking-tight text-foreground">Web Agent Assistant</h2>
-            <p className="text-sm text-muted-foreground">
-              Powered by {model}. Ask a question and see tool usage inline.
-            </p>
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">Open Source Web Agent Assistant</h2>
+            <p className="text-sm text-muted-foreground">Powered by {model}</p>
           </div>
           <Button
             type="button"

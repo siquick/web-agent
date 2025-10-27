@@ -50,6 +50,46 @@ const markdownComponents: Components = {
   li: ({ node, className, ...props }) => (
     <li className={cn("marker:text-current [&>p]:m-0", className)} {...props} />
   ),
+  table: ({ node, className, children, ...props }) => (
+    <div className="mb-3 overflow-x-auto rounded-lg border border-border/60">
+      <table
+        className={cn(
+          "w-full min-w-[560px] border-collapse text-sm text-foreground [&_tbody_tr:nth-child(odd)]:bg-muted/60",
+          className,
+        )}
+        {...props}
+      >
+        {children}
+      </table>
+    </div>
+  ),
+  thead: ({ node, className, ...props }) => (
+    <thead className={cn("bg-muted/80 text-xs uppercase tracking-wide text-muted-foreground", className)} {...props} />
+  ),
+  tbody: ({ node, className, ...props }) => (
+    <tbody className={cn("text-sm", className)} {...props} />
+  ),
+  tr: ({ node, className, ...props }) => (
+    <tr className={cn("border-b border-border/80 last:border-b-0", className)} {...props} />
+  ),
+  th: ({ node, className, ...props }) => (
+    <th
+      className={cn(
+        "whitespace-pre-wrap px-3 py-2 text-left font-semibold text-foreground",
+        className,
+      )}
+      {...props}
+    />
+  ),
+  td: ({ node, className, ...props }) => (
+    <td
+      className={cn(
+        "whitespace-pre-wrap px-3 py-2 align-top text-sm text-foreground",
+        className,
+      )}
+      {...props}
+    />
+  ),
   blockquote: ({ node, className, ...props }) => (
     <blockquote
       className={cn(

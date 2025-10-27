@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -48,6 +49,45 @@ class ReflectionAgent:
     def __init__(self, model: str = DEFAULT_CHAT_MODEL):
         self.model = model
 
+    @staticmethod
+    def _strip_code_fence(payload: str) -> str:
+        trimmed = payload.strip()
+        matcher = re.match(r"^```(?:json)?\s*(?P<body>.*)\s*```$", trimmed, re.DOTALL)
+        if matcher:
+            return matcher.group("body").strip()
+        return trimmed
+
+    @staticmethod
+    def _extract_json_object(payload: str) -> Optional[str]:
+        depth = 0
+        start_index: Optional[int] = None
+        for index, char in enumerate(payload):
+            if char == "{":
+                if depth == 0:
+                    start_index = index
+                depth += 1
+            elif char == "}":
+                if depth > 0:
+                    depth -= 1
+                    if depth == 0 and start_index is not None:
+                        return payload[start_index : index + 1]
+        return None
+
+    def _parse_reflection_payload(self, payload: str) -> Optional[Dict[str, Any]]:
+        candidates = [payload, self._strip_code_fence(payload)]
+        extracted = self._extract_json_object(payload)
+        if extracted:
+            candidates.append(extracted)
+
+        for candidate in candidates:
+            if not candidate:
+                continue
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
+        return None
+
     def evaluate(
         self,
         question: str,
@@ -77,15 +117,19 @@ class ReflectionAgent:
             model=self.model,
         )
 
-        try:
-            reflection_data = json.loads(reflection_raw)
-        except json.JSONDecodeError:
-            logging.warning("Failed to parse reflection response; defaulting to accept.")
+        parsed_reflection = self._parse_reflection_payload(reflection_raw)
+        if parsed_reflection is None:
+            logging.warning(
+                "Failed to parse reflection response; defaulting to accept. Raw output: %s",
+                reflection_raw,
+            )
             reflection_data = {
                 "requires_more_context": False,
                 "reason": "Could not parse reflection JSON.",
                 "follow_up_instruction": "",
             }
+        else:
+            reflection_data = parsed_reflection
 
         requires_more_context = bool(
             reflection_data.get("requires_more_context", False)

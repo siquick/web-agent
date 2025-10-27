@@ -16,7 +16,10 @@ DEFAULT_BASE_URL = os.environ.get("WEB_AGENT_API_URL", "http://127.0.0.1:8000")
 DEFAULT_MODEL = DEFAULT_CHAT_MODEL
 SYSTEM_PROMPT = os.environ.get(
     "WEB_AGENT_SYSTEM_PROMPT",
-    "You are a helpful research assistant. Cite sources when possible.",
+    (
+        "You are a helpful research assistant. Cite sources when possible. "
+        "Respond using GitHub-flavored Markdown and prefer tables when comparing options."
+    ),
 )
 
 
