@@ -114,6 +114,25 @@ Configure `WEB_AGENT_API_URL` or `WEB_AGENT_SYSTEM_PROMPT` in `.env` to point th
 
 ---
 
+### Web UI (React)
+
+- Requires Node 22.x and [pnpm](https://pnpm.io/) (the project declares both in `web-ui/package.json`).
+- The UI expects the FastAPI server to be running and reachable at the URL exposed via `VITE_WEB_AGENT_API_URL` (defaults to `http://127.0.0.1:8000`).
+
+```bash
+cd web-ui
+pnpm install
+pnpm dev
+```
+
+Environment overrides (add to `web-ui/.env` or export before running Vite):
+
+- `VITE_WEB_AGENT_API_URL` – Base URL for the FastAPI backend.
+- `VITE_WEB_AGENT_MODEL` – Model name sent with chat requests (defaults to the backend’s default).
+- `VITE_WEB_AGENT_SYSTEM_PROMPT` – Optional custom system prompt displayed in the first turn.
+
+---
+
 ### Model Configuration
 
 - The server reads `HF_ROUTER_MODEL` to decide which Hugging Face-hosted model to call; defaults to `Qwen/Qwen3-32B:cerebras`.

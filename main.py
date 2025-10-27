@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any, Dict, List, Tuple
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from web_agent import AgentResult, ToolUseAgent
 from web_agent.ai.llm import DEFAULT_CHAT_MODEL, is_supported_chat_model
@@ -20,6 +22,21 @@ app = FastAPI(
     title="Web Agent API",
     description="FastAPI service exposing agentic tooling over the Qwen 3 32B model via Hugging Face Inference.",
     version="0.1.0",
+)
+
+default_origins = "http://127.0.0.1:5173,http://localhost:5173"
+cors_origins = [
+    origin.strip()
+    for origin in os.environ.get("WEB_AGENT_CORS_ORIGINS", default_origins).split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins or ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 agent = ToolUseAgent()

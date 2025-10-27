@@ -10,3 +10,8 @@ wheels/
 .venv
 
 .env
+web-ui/node_modules
+web-ui/dist
+web-ui/.turbo
+web-ui/.vercel
+web-ui/.env
