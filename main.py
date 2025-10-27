@@ -8,10 +8,10 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
-from lib.agent import AgentResult, ToolUseAgent
-from lib.ai.utils import content_to_text
-from lib.api.schemas import ChatMessage, ChatRequest, QueryRequest
-from lib.ai.llm import DEFAULT_CHAT_MODEL, is_supported_chat_model
+from web_agent import AgentResult, ToolUseAgent
+from web_agent.ai.llm import DEFAULT_CHAT_MODEL, is_supported_chat_model
+from web_agent.ai.utils import content_to_text
+from web_agent.api.schemas import ChatMessage, ChatRequest, QueryRequest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

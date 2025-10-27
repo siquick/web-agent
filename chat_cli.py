@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import requests
 from dotenv import load_dotenv
 
-from lib.ai.llm import DEFAULT_CHAT_MODEL
+from web_agent.ai.llm import DEFAULT_CHAT_MODEL
 
 load_dotenv()
 

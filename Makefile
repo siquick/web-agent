@@ -14,7 +14,7 @@ chat:
 	uv run python chat_cli.py
 
 check:
-	uv run python -m compileall main.py lib
+	uv run python -m compileall main.py web_agent
 
 deps:
 	uv sync

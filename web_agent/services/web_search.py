@@ -1,9 +1,10 @@
+from __future__ import annotations
+
 from exa_py import Exa
 from dotenv import load_dotenv
 
 import os
 
-# Use .env to store your API key or paste it directly into the code
 load_dotenv()
 exa = Exa(os.getenv("EXA_API_KEY"))
 
@@ -49,7 +50,11 @@ def fetch_url_content(
                 continue
             status = entry.get("status", "unknown")
             tag = entry.get("error", {}).get("tag") if entry.get("error") else None
-            http_code = entry.get("error", {}).get("httpStatusCode") if entry.get("error") else None
+            http_code = (
+                entry.get("error", {}).get("httpStatusCode")
+                if entry.get("error")
+                else None
+            )
             parts = [status.upper()]
             if tag:
                 parts.append(str(tag))

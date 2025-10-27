@@ -8,7 +8,6 @@ import tiktoken
 @lru_cache
 def _encoder() -> tiktoken.Encoding:
     """Return a tokenizer suitable for modern chat models."""
-    # o200k_base covers GPT-4o and is a reasonable approximation for Qwen.
     return tiktoken.get_encoding("o200k_base")
 
 

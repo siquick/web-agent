@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
-from lib.web_search import (
+from web_agent.services.web_search import (
     fetch_url_content,
     refine_web_search_into_context,
     web_search,
@@ -52,7 +52,7 @@ class ToolRegistry:
         self._tools = {tool.name: tool for tool in tools}
 
     def definitions(self) -> List[Dict[str, Any]]:
-        """Expose tool metadata in the format expected by the Cerebras/OpenAI APIs."""
+        """Expose tool metadata in the format expected by the OpenAI-compatible APIs."""
         return [tool.to_openai_schema() for tool in self._tools.values()]
 
     def execute(self, tool_name: str, arguments: Dict[str, Any]) -> ToolExecution:
@@ -119,7 +119,7 @@ class CurrentTimeTool(BaseTool):
 
 
 class EchoTool(BaseTool):
-    """Debug utility that simply echoes arguments back to the model."""
+    """Diagnostic utility that simply echoes arguments back to the model."""
 
     name = "echo"
     description = (
@@ -140,12 +140,16 @@ class EchoTool(BaseTool):
     def run(self, **kwargs: Any) -> ToolExecution:
         message = kwargs.get("message", "")
         payload = json.dumps({"echo": message})
-        return ToolExecution(name=self.name, arguments={"message": message}, content=payload)
+        return ToolExecution(
+            name=self.name, arguments={"message": message}, content=payload
+        )
 
 
 class UrlContentTool(BaseTool):
     name = "fetch_url_content"
-    description = "Retrieve the contents of a URL and return it as markdown for grounding or summarisation."
+    description = (
+        "Retrieve the contents of a URL and return it as markdown for grounding or summarisation."
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -179,7 +183,12 @@ class UrlContentTool(BaseTool):
 
 def default_tooling(extra_tools: Optional[Iterable[BaseTool]] = None) -> ToolRegistry:
     """Convenience helper to build a registry with common utilities."""
-    tools: List[BaseTool] = [WebSearchTool(), UrlContentTool(), CurrentTimeTool(), EchoTool()]
+    tools: List[BaseTool] = [
+        WebSearchTool(),
+        UrlContentTool(),
+        CurrentTimeTool(),
+        EchoTool(),
+    ]
     if extra_tools:
         tools.extend(extra_tools)
     return ToolRegistry(tools)

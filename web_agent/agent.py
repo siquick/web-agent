@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
-from lib.ai.llm import (
+from web_agent.ai.llm import (
     DEFAULT_CHAT_MODEL,
     SUMMARY_TOKEN_LIMIT as LLM_SUMMARY_TOKEN_LIMIT,
     canonical_chat_model,
@@ -11,11 +11,11 @@ from lib.ai.llm import (
     llm_call,
     llm_chat,
 )
-from lib.ai.prompts import reflection_prompt_template
-from lib.ai.system_prompts import agent_system_prompt
-from lib.ai.utils import content_to_text
-from lib.ai.token_utils import count_tokens
-from lib.tools import BaseTool, ToolExecution, ToolRegistry, default_tooling
+from web_agent.ai.prompts import reflection_prompt_template
+from web_agent.ai.system_prompts import agent_system_prompt
+from web_agent.ai.utils import content_to_text
+from web_agent.ai.token_utils import count_tokens
+from web_agent.tools import BaseTool, ToolExecution, ToolRegistry, default_tooling
 
 
 @dataclass
@@ -291,7 +291,9 @@ class ToolUseAgent:
         summary = ""
         if len(normalized) >= self.SUMMARY_MIN_MESSAGE_COUNT:
             try:
-                for chunk in self._transcript_chunks(normalized, self.SUMMARY_CHUNK_TOKEN_LIMIT):
+                for chunk in self._transcript_chunks(
+                    normalized, self.SUMMARY_CHUNK_TOKEN_LIMIT
+                ):
                     summary = conversation_summary_update(
                         summary,
                         chunk,

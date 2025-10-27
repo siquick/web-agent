@@ -20,14 +20,23 @@ FastAPI service that wraps a lightweight agent capable of web-grounded research 
 .
 ├── main.py                 # FastAPI application entrypoint
 ├── chat_cli.py             # Terminal chat client (POSTs to /v1/chat)
-├── lib/
+├── web_agent/
+│   ├── __init__.py
 │   ├── agent.py            # Reflection-enabled tool-use agent
 │   ├── ai/
+│   │   ├── __init__.py
 │   │   ├── llm.py          # Hugging Face router integration + helpers
 │   │   ├── prompts.py      # Prompt templates
-│   │   └── system_prompts.py
-│   ├── tools.py            # Tool definitions + registry
-│   └── web_search.py       # Exa search client and context shaping
+│   │   ├── system_prompts.py
+│   │   ├── utils.py        # Message content helpers
+│   │   └── token_utils.py  # Token counting utilities
+│   ├── api/
+│   │   └── schemas.py      # OpenAI-compatible request models
+│   ├── services/
+│   │   └── web_search.py   # Exa clients and helpers
+│   └── tools/
+│       ├── __init__.py
+│       └── registry.py     # Tool definitions and registry
 ├── pyproject.toml          # uv project definition
 └── Makefile
 ```
@@ -126,7 +135,7 @@ Configure `WEB_AGENT_API_URL` or `WEB_AGENT_SYSTEM_PROMPT` in `.env` to point th
 
 ### Extending Tools
 
-- Implement a new tool by subclassing `BaseTool` in `lib/tools.py`.
+- Implement a new tool by subclassing `BaseTool` in `web_agent/tools/registry.py`.
 - Register it via `default_tooling` or pass a custom `ToolRegistry` when constructing `ToolUseAgent`.
 - Built-in tools:
   - `web_search` – Exa-powered multi-result search with context stitching.

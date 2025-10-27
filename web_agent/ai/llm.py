@@ -1,8 +1,8 @@
-from lib.ai.prompts import (
-    query_rewrite_prompt_template,
+from web_agent.ai.prompts import (
     answer_generation_prompt_template,
-    context_relevance_judgment_template,
     conversation_summarizer_prompt_template,
+    context_relevance_judgment_template,
+    query_rewrite_prompt_template,
 )
 import logging
 from dotenv import load_dotenv
@@ -11,14 +11,12 @@ from functools import lru_cache
 from openai import OpenAI
 from typing import Any, Dict, Optional, Sequence
 
-from lib.ai.token_utils import count_tokens, trim_to_tokens
+from web_agent.ai.token_utils import count_tokens, trim_to_tokens
 
 load_dotenv()
 
 HF_ROUTER_BASE_URL = "https://router.huggingface.co/v1"
-HF_ROUTER_MODEL = os.environ.get("HF_ROUTER_MODEL", "Qwen/Qwen3-32B:groq")
-# HF_ROUTER_BASE_URL = "http://localhost:11434/v1/"
-# HF_ROUTER_MODEL = "qwen3:1.7b"
+HF_ROUTER_MODEL = os.environ.get("HF_ROUTER_MODEL", "Qwen/Qwen3-32B:cerebras")
 DEFAULT_CHAT_MODEL = HF_ROUTER_MODEL
 
 MAX_CONTEXT_TOKENS = 65536

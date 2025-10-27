@@ -4,7 +4,7 @@ from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, root_validator
 
-from lib.ai.llm import DEFAULT_CHAT_MODEL
+from web_agent.ai.llm import DEFAULT_CHAT_MODEL
 
 
 class ChatContentPart(BaseModel):
