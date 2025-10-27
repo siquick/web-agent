@@ -6,7 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
-from lib.web_search import refine_web_search_into_context, web_search
+from lib.web_search import (
+    fetch_url_content,
+    refine_web_search_into_context,
+    web_search,
+)
 
 
 @dataclass
@@ -139,9 +143,43 @@ class EchoTool(BaseTool):
         return ToolExecution(name=self.name, arguments={"message": message}, content=payload)
 
 
+class UrlContentTool(BaseTool):
+    name = "fetch_url_content"
+    description = "Retrieve the contents of a URL and return it as markdown for grounding or summarisation."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "The URL to fetch.",
+            },
+            "max_characters": {
+                "type": "integer",
+                "description": "Maximum number of characters to retrieve from the page text.",
+                "default": 8000,
+            },
+        },
+        "required": ["url"],
+        "additionalProperties": False,
+    }
+
+    def run(self, **kwargs: Any) -> ToolExecution:
+        url = kwargs.get("url")
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError("fetch_url_content requires a non-empty string 'url'.")
+
+        max_characters = kwargs.get("max_characters", 8000)
+        content = fetch_url_content(url=url, max_characters=int(max_characters))
+        return ToolExecution(
+            name=self.name,
+            arguments={"url": url, "max_characters": max_characters},
+            content=content,
+        )
+
+
 def default_tooling(extra_tools: Optional[Iterable[BaseTool]] = None) -> ToolRegistry:
     """Convenience helper to build a registry with common utilities."""
-    tools: List[BaseTool] = [WebSearchTool(), CurrentTimeTool(), EchoTool()]
+    tools: List[BaseTool] = [WebSearchTool(), UrlContentTool(), CurrentTimeTool(), EchoTool()]
     if extra_tools:
         tools.extend(extra_tools)
     return ToolRegistry(tools)

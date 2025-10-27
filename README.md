@@ -7,7 +7,7 @@ FastAPI service that wraps a lightweight agent capable of web-grounded research 
 ### Features
 
 - **OpenAI-compatible interface** – `/v1/query` and `/v1/chat` mirror the official schema for straightforward client integration.
-- **Tool-aware agent** – Orchestrates web search, time, and future tools via dynamic tool definitions.
+- **Tool-aware agent** – Orchestrates web search, URL content fetching, time, and future tools via dynamic tool definitions.
 - **Reflection loop** – Optional self-check pass to demand more evidence before finalising answers.
 - **Conversation summarisation** – Maintains a compact memory using the same LLM to avoid context overflows.
 - **Interactive CLI** – `make chat` spins up a local terminal client that mirrors the API behaviour.
@@ -128,6 +128,10 @@ Configure `WEB_AGENT_API_URL` or `WEB_AGENT_SYSTEM_PROMPT` in `.env` to point th
 
 - Implement a new tool by subclassing `BaseTool` in `lib/tools.py`.
 - Register it via `default_tooling` or pass a custom `ToolRegistry` when constructing `ToolUseAgent`.
+- Built-in tools:
+  - `web_search` – Exa-powered multi-result search with context stitching.
+  - `fetch_url_content` – Pull full page content for a pasted URL and return markdown.
+  - `current_time_utc` – Snapshot of the current UTC time.
 - Tool responses are automatically streamed back into the conversation and exposed in the API response metadata.
 
 ---
