@@ -14,7 +14,7 @@ export default function App() {
         </div>
       </header>
       <main className="flex h-full flex-1 justify-center">
-        <div className="mx-auto flex w-full max-w-5xl flex-1">
+        <div className="mx-auto flex w-full max-w-6xl flex-1">
           <ChatPanel />
         </div>
       </main>

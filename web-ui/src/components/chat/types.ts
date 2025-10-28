@@ -10,6 +10,8 @@ export interface LiveToolCall {
   status: "running" | "completed";
   arguments: Record<string, unknown>;
   output?: string;
+  startedAt?: string;
+  completedAt?: string;
 }
 
 export interface ReflectionMetadata {
@@ -23,9 +25,16 @@ export interface MessageMetadata {
   refined_query?: string | null;
   tool_calls: ToolCallMetadata[];
   reflections: ReflectionMetadata[];
+  provider?: ProviderInfo;
 }
 
 export type ChatRole = "system" | "user" | "assistant";
+
+export interface ProviderInfo {
+  id: string;
+  label: string;
+  baseUrl?: string;
+}
 
 export type ChatMessage = {
   id: string;
@@ -36,6 +45,8 @@ export type ChatMessage = {
   streaming?: boolean;
   liveToolCalls?: LiveToolCall[];
   error?: string;
+  provider?: ProviderInfo;
+  stopped?: boolean;
 };
 
 export interface ModelOption {

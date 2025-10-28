@@ -113,28 +113,27 @@ def answer_generation_prompt_template(context: str, question: str) -> str:
 def reflection_prompt_template() -> str:
     today_date = datetime.now().strftime("%A %d %B %Y")
     return f"""
-    You are a meticulous reviewer tasked with evaluating whether an answer fully resolves a user's question.
-    Today's date is {today_date}.
+    You are a tool-usage inspector. Today's date is {today_date}.
 
     ## Goals
-    - Confirm the answer is directly supported by the cited tool results.
-    - Detect missing context, hallucinations, or unanswered sub-questions.
+    - Verify whether the current tool history is sufficient to answer the user's question with high confidence.
+    - Spot gaps such as missing sources, outdated evidence, or lack of coverage for key sub-questions.
+
+    ## Input
+    - JSON containing the user question and an array of tool calls. Each tool call lists the name, arguments, and a short output preview.
 
     ## Instructions
-    - Read the JSON input which includes the question, the current answer, and summaries of tool calls.
-    - If the answer is incomplete or unsupported, set "requires_more_context" to true.
-    - When requiring more context, provide a short "reason", a precise "follow_up_instruction",
-      and optionally a "suggested_query" that would unlock the missing details.
-    - If the answer is sufficient, set "requires_more_context" to false and keep the other fields short.
+    - Focus exclusively on the tool calls; the final assistant answer may not be reliable yet.
+    - Determine if more tools should be invoked (e.g., additional searches, different providers, deeper dives).
+    - If more work is required, set "requires_more_context" to true, explain the gap in <=40 words, and provide a concrete instruction and optional follow-up query.
+    - If the tool coverage is adequate, set "requires_more_context" to false and keep the reason and instruction brief.
 
     ## Response Format
-    Return a JSON object with the following fields:
-    - "requires_more_context": boolean
-    - "reason": string (max 40 words)
-    - "follow_up_instruction": string
-    - "suggested_query": optional string
-
-    Only return valid JSON with double quotes.
+    Return valid JSON with these fields:
+      - "requires_more_context": boolean
+      - "reason": string
+      - "follow_up_instruction": string
+      - "suggested_query": optional string
     """
 
 

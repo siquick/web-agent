@@ -59,6 +59,22 @@ function extractMetadata(payload: unknown): MessageMetadata | undefined {
   }
 
   const metadata = maybeMetadata as Record<string, unknown>;
+  const providerRaw = metadata.provider;
+  const provider =
+    providerRaw && typeof providerRaw === "object"
+      ? {
+          id: typeof (providerRaw as Record<string, unknown>).id === "string"
+            ? String((providerRaw as Record<string, unknown>).id)
+            : "",
+          label: typeof (providerRaw as Record<string, unknown>).label === "string"
+            ? String((providerRaw as Record<string, unknown>).label)
+            : "",
+          baseUrl:
+            typeof (providerRaw as Record<string, unknown>).base_url === "string"
+              ? String((providerRaw as Record<string, unknown>).base_url)
+              : undefined,
+        }
+      : undefined;
   return {
     refined_query: typeof metadata.refined_query === "string" ? metadata.refined_query : null,
     tool_calls: Array.isArray(metadata.tool_calls)
@@ -89,6 +105,7 @@ function extractMetadata(payload: unknown): MessageMetadata | undefined {
             };
           })
       : [],
+    provider: provider && provider.label ? provider : undefined,
   };
 }
 
@@ -328,6 +345,7 @@ export function ChatPanel() {
             name,
             status: "running",
             arguments: argumentsPayload,
+            startedAt: new Date().toISOString(),
           };
           updateAssistantMessage(assistantId, (message) => {
             const existing: LiveToolCall[] = message.liveToolCalls ?? [];
@@ -342,7 +360,14 @@ export function ChatPanel() {
           updateAssistantMessage(assistantId, (message) => {
             const existing: LiveToolCall[] = message.liveToolCalls ?? [];
             const updated: LiveToolCall[] = existing.map((call) =>
-              call.id === callId ? { ...call, status: "completed", output } : call
+              call.id === callId
+                ? {
+                    ...call,
+                    status: "completed",
+                    output,
+                    completedAt: call.completedAt ?? new Date().toISOString(),
+                  }
+                : call
             );
             return {
               ...message,
@@ -393,24 +418,41 @@ export function ChatPanel() {
         const firstChoice = choices[0] as Record<string, unknown> | undefined;
         const assistantMessage = firstChoice?.message as Record<string, unknown> | undefined;
         if (assistantMessage) {
+          const metadata = extractMetadata(assistantMessage);
           const text = parseAssistantContent(assistantMessage.content);
           if (text) {
             assistantBufferRef.current.text = text;
             const { thinking, visible } = splitThinkingSegments(text);
-            const metadata = extractMetadata(assistantMessage);
-            updateAssistantMessage(assistantId, (message) => ({
-              ...message,
-              content: visible,
-              thinking,
-              metadata: metadata ?? message.metadata,
-              streaming: false,
-            }));
+            updateAssistantMessage(assistantId, (message) => {
+              const existingCalls = message.liveToolCalls ?? [];
+              const nextCalls =
+                existingCalls.length > 0
+                  ? existingCalls
+                  : (metadata?.tool_calls ?? []).map((call, index) => ({
+                      id: `${call.name}-${index}`,
+                      name: call.name,
+                      status: "completed" as const,
+                      arguments: call.arguments,
+                      output: call.output_preview,
+                      completedAt: new Date().toISOString(),
+                    }));
+              return {
+                ...message,
+                content: visible,
+                thinking,
+                metadata: metadata ?? message.metadata,
+                streaming: false,
+                provider: metadata?.provider ?? message.provider,
+                liveToolCalls: nextCalls,
+                stopped: undefined,
+              };
+            });
           } else {
-            const metadata = extractMetadata(assistantMessage);
             if (metadata) {
               updateAssistantMessage(assistantId, (message) => ({
                 ...message,
                 metadata,
+                provider: metadata.provider ?? message.provider,
               }));
             }
           }
@@ -577,13 +619,27 @@ export function ChatPanel() {
         const metadata = extractMetadata(assistantMessage);
         const { thinking, visible } = splitThinkingSegments(text);
 
-        updateAssistantMessage(assistantId, (current) => ({
-          ...current,
-          content: visible,
-          thinking,
-          metadata,
-          streaming: false,
-        }));
+        updateAssistantMessage(assistantId, (current) => {
+          const fallbackCalls =
+            metadata?.tool_calls?.map((call, index) => ({
+              id: `${call.name}-${index}`,
+              name: call.name,
+              status: "completed" as const,
+              arguments: call.arguments,
+              output: call.output_preview,
+              completedAt: new Date().toISOString(),
+            })) ?? [];
+          return {
+            ...current,
+            content: visible,
+            thinking,
+            metadata: metadata ?? current.metadata,
+            streaming: false,
+            provider: metadata?.provider ?? current.provider,
+            liveToolCalls: fallbackCalls.length ? fallbackCalls : current.liveToolCalls,
+            stopped: undefined,
+          };
+        });
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           return;
@@ -693,6 +749,7 @@ export function ChatPanel() {
       updateAssistantMessage(assistantId, (message) => ({
         ...message,
         streaming: false,
+        stopped: true,
       }));
     }
     assistantBufferRef.current = { id: null, text: assistantBufferRef.current.text };
@@ -781,20 +838,21 @@ export function ChatPanel() {
             disabled={status.isStreaming || !selectedModel}
             rows={3}
           />
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-end gap-3">
             {status.isStreaming ? (
-              <Button type="button" variant="outline" onClick={handleStop}>
-                Stop
-              </Button>
-            ) : (
-              <span />
-            )}
+              <span className="text-xs text-muted-foreground">Generating…</span>
+            ) : null}
             <div className="flex items-center gap-2">
-              <Button type="submit" disabled={status.isStreaming || !input.trim() || !selectedModel}>
+              <Button
+                type={status.isStreaming ? "button" : "submit"}
+                variant={status.isStreaming ? "outline" : "default"}
+                onClick={status.isStreaming ? handleStop : undefined}
+                disabled={status.isStreaming ? false : !input.trim() || !selectedModel}
+              >
                 {status.isStreaming ? (
                   <span className="flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Streaming…
+                    Stop
                   </span>
                 ) : (
                   "Send"

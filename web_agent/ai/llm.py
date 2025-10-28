@@ -106,12 +106,33 @@ DEFAULT_PROVIDER_CONFIGS: List[Dict[str, Any]] = [
 ]
 
 DEFAULT_MODEL_CONFIGS: List[Dict[str, Any]] = [
+    # {
+    #     "id": "huggingface/moonshotai-kimi-k2-instruct-0905-groq",
+    #     "provider_id": "huggingface",
+    #     "model_name": "moonshotai/Kimi-K2-Instruct-0905:groq",
+    #     "display_name": "Kimi K2 Instruct (HF · Groq)",
+    #     "description": "MoonshotAI Kimi K2 Instruct served via Hugging Face Inference with the Groq backend.",
+    # },
     {
-        "id": "openrouter/qwen-3-32b",
-        "provider_id": "openrouter",
-        "model_name": "qwen/qwen3-32b",
-        "display_name": "Qwen 3 32B (OpenRouter)",
-        "description": "General-purpose 32B model served via OpenRouter.",
+        "id": "huggingface/openai-gpt-oss-120b-cerebras",
+        "provider_id": "huggingface",
+        "model_name": "openai/gpt-oss-120b:cerebras",
+        "display_name": "GPT-OSS 120B (HF · Cerebras)",
+        "description": "OpenAI GPT-OSS 120B hosted on Hugging Face Inference with the Cerebras backend.",
+    },
+    {
+        "id": "huggingface/openai-gpt-oss-120b-groq",
+        "provider_id": "huggingface",
+        "model_name": "openai/gpt-oss-120b:groq",
+        "display_name": "GPT-OSS 120B (HF · Groq)",
+        "description": "OpenAI GPT-OSS 120B hosted on Hugging Face Inference with the Groq backend.",
+    },
+    {
+        "id": "huggingface/qwen3-32b-cerebras",
+        "provider_id": "huggingface",
+        "model_name": "Qwen/Qwen3-32B:cerebras",
+        "display_name": "Qwen 3 32B (HF · Cerebras)",
+        "description": "Qwen 3 32B hosted on Hugging Face via the Cerebras backend.",
     },
     {
         "id": "huggingface/qwen3-32b-groq",
@@ -121,11 +142,11 @@ DEFAULT_MODEL_CONFIGS: List[Dict[str, Any]] = [
         "description": "Qwen 3 32B hosted on Hugging Face via the Groq backend.",
     },
     {
-        "id": "huggingface/qwen3-32b-cerebras",
-        "provider_id": "huggingface",
-        "model_name": "Qwen/Qwen3-32B:cerebras",
-        "display_name": "Qwen 3 32B (HF · Cerebras)",
-        "description": "Qwen 3 32B hosted on Hugging Face via the Cerebras backend.",
+        "id": "openrouter/qwen-3-32b",
+        "provider_id": "openrouter",
+        "model_name": "qwen/qwen3-32b",
+        "display_name": "Qwen 3 32B (OpenRouter)",
+        "description": "General-purpose 32B model served via OpenRouter.",
     },
 ]
 
@@ -140,12 +161,16 @@ def _load_provider_configs() -> Dict[str, ProviderConfig]:
                 label=str(entry.get("label") or entry["id"]),
                 base_url=str(entry["base_url"]).rstrip("/"),
                 api_key=str(entry["api_key"]) if entry.get("api_key") else None,
-                api_key_envs=_as_tuple(entry.get("api_key_envs") or entry.get("api_key_env")),
+                api_key_envs=_as_tuple(
+                    entry.get("api_key_envs") or entry.get("api_key_env")
+                ),
                 supports_streaming=bool(entry.get("supports_streaming", True)),
                 metadata=dict(entry.get("metadata") or {}),
             )
         except KeyError as exc:
-            raise RuntimeError(f"Invalid provider configuration: missing {exc}") from exc
+            raise RuntimeError(
+                f"Invalid provider configuration: missing {exc}"
+            ) from exc
         providers[provider.id] = provider
     return providers
 
@@ -157,15 +182,23 @@ def _load_model_configs(providers: Dict[str, ProviderConfig]) -> Dict[str, Model
         try:
             provider_id = str(entry["provider_id"])
             if provider_id not in providers:
-                raise RuntimeError(f"Model references unknown provider '{provider_id}'.")
+                raise RuntimeError(
+                    f"Model references unknown provider '{provider_id}'."
+                )
             model = ModelConfig(
                 id=str(entry["id"]),
                 provider_id=provider_id,
                 model_name=str(entry["model_name"]),
-                display_name=str(entry["display_name"]) if entry.get("display_name") else None,
-                description=str(entry["description"]) if entry.get("description") else None,
+                display_name=str(entry["display_name"])
+                if entry.get("display_name")
+                else None,
+                description=str(entry["description"])
+                if entry.get("description")
+                else None,
                 supports_streaming=(
-                    bool(entry["supports_streaming"]) if entry.get("supports_streaming") is not None else None
+                    bool(entry["supports_streaming"])
+                    if entry.get("supports_streaming") is not None
+                    else None
                 ),
                 metadata=dict(entry.get("metadata") or {}),
             )
@@ -180,18 +213,23 @@ def _load_model_configs(providers: Dict[str, ProviderConfig]) -> Dict[str, Model
 PROVIDERS: Dict[str, ProviderConfig] = _load_provider_configs()
 MODELS: Dict[str, ModelConfig] = _load_model_configs(PROVIDERS)
 
-DEFAULT_CHAT_MODEL = os.environ.get("WEB_AGENT_DEFAULT_MODEL")
-if DEFAULT_CHAT_MODEL:
-    try:
-        _ = MODELS[DEFAULT_CHAT_MODEL]
-    except KeyError:
+PREFERRED_DEFAULT_MODEL = "huggingface/openai-gpt-oss-120b-groq"
+DEFAULT_CHAT_MODEL = os.environ.get("WEB_AGENT_DEFAULT_MODEL", PREFERRED_DEFAULT_MODEL)
+if DEFAULT_CHAT_MODEL not in MODELS:
+    if DEFAULT_CHAT_MODEL != PREFERRED_DEFAULT_MODEL:
         logger.warning(
-            "WEB_AGENT_DEFAULT_MODEL='%s' not found; falling back to the first configured model.",
+            "WEB_AGENT_DEFAULT_MODEL='%s' not found; attempting preferred default '%s'.",
             DEFAULT_CHAT_MODEL,
+            PREFERRED_DEFAULT_MODEL,
         )
-        DEFAULT_CHAT_MODEL = None
-if not DEFAULT_CHAT_MODEL:
-    DEFAULT_CHAT_MODEL = next(iter(MODELS.keys()))
+    if PREFERRED_DEFAULT_MODEL in MODELS:
+        DEFAULT_CHAT_MODEL = PREFERRED_DEFAULT_MODEL
+    else:
+        logger.warning(
+            "Preferred default model '%s' missing; falling back to first configured model.",
+            PREFERRED_DEFAULT_MODEL,
+        )
+        DEFAULT_CHAT_MODEL = next(iter(MODELS.keys()))
 
 MAX_CONTEXT_TOKENS = 65536
 SUMMARY_TOKEN_RATIO = 0.3

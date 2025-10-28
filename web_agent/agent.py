@@ -2,20 +2,22 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from web_agent.ai.llm import (
     DEFAULT_CHAT_MODEL,
     SUMMARY_TOKEN_LIMIT as LLM_SUMMARY_TOKEN_LIMIT,
     canonical_chat_model,
     conversation_summary_update,
+    get_provider_config,
     llm_call,
     llm_chat,
 )
 from web_agent.ai.prompts import reflection_prompt_template
 from web_agent.ai.system_prompts import agent_system_prompt
 from web_agent.ai.utils import content_to_text
-from web_agent.ai.token_utils import count_tokens
+from web_agent.ai.token_utils import count_tokens, trim_to_tokens
 from web_agent.tools import BaseTool, ToolExecution, ToolRegistry, default_tooling
 
 
@@ -41,12 +43,15 @@ class AgentResult:
     refined_query: str
     tool_calls: List[ToolCallRecord]
     reflections: List[ReflectionRecord]
+    provider: Optional[Dict[str, Any]] = None
 
 
 def build_agent_metadata(
     refined_query: str,
     tool_calls: Iterable[ToolCallRecord],
     reflections: Iterable[ReflectionRecord],
+    *,
+    provider: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     tool_meta = [
         {
@@ -65,11 +70,14 @@ def build_agent_metadata(
         }
         for reflection in reflections
     ]
-    return {
+    payload = {
         "refined_query": refined_query,
         "tool_calls": tool_meta,
         "reflections": reflection_meta,
     }
+    if provider:
+        payload["provider"] = provider
+    return payload
 
 
 class ReflectionAgent:
@@ -135,7 +143,6 @@ class ReflectionAgent:
         reflection_input = json.dumps(
             {
                 "question": question,
-                "answer": answer,
                 "tool_history": tool_summaries,
             }
         )
@@ -186,6 +193,8 @@ class ToolUseAgent:
     SUMMARY_CHUNK_TOKEN_LIMIT = 4000
     RECENT_CONTEXT_TOKEN_BUDGET = 20000
     SUMMARY_MIN_MESSAGE_COUNT = 6
+    TOOL_CONTENT_TOKEN_LIMIT = 2000
+    TOOL_CONTENT_CHAR_LIMIT = 16000
 
     def __init__(
         self,
@@ -219,6 +228,12 @@ class ToolUseAgent:
         event_handler: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> AgentResult:
         active_model = canonical_chat_model(model or self.default_model)
+        _model_config, provider_config = get_provider_config(active_model)
+        provider_info = {
+            "id": provider_config.id,
+            "label": provider_config.label,
+            "base_url": provider_config.base_url,
+        }
         if self.reflection_agent.model != active_model:
             self.reflection_agent.model = active_model
         refined_query = question
@@ -231,7 +246,13 @@ class ToolUseAgent:
                 except Exception as exc:  # pragma: no cover - defensive
                     logging.warning("Agent event handler raised an exception: %s", exc)
 
-        emit({"type": "run", "status": "start", "model": active_model, "question": question})
+        emit({
+            "type": "run",
+            "status": "start",
+            "model": active_model,
+            "question": question,
+            "provider": provider_info,
+        })
 
         messages: List[Dict[str, Any]] = [
             {
@@ -388,49 +409,67 @@ class ToolUseAgent:
             messages.append(assistant_message)
 
             if sorted_tool_states:
-                for state in sorted_tool_states:
-                    arguments_dict = _parse_arguments(state.get("arguments") or "{}")
-                    tool_name = state.get("name") or ""
-                    if not tool_name:
-                        logging.warning("Tool call missing function name; skipping execution.")
-                        continue
-                    if not state.get("emitted_start"):
+                futures: List[Tuple[Dict[str, Any], Dict[str, Any], Any]] = []
+                max_workers = max(1, min(len(sorted_tool_states), 4))
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    for state in sorted_tool_states:
+                        arguments_dict = _parse_arguments(state.get("arguments") or "{}")
+                        tool_name = state.get("name") or ""
+                        if not tool_name:
+                            logging.warning("Tool call missing function name; skipping execution.")
+                            continue
+                        if not state.get("emitted_start"):
+                            emit(
+                                {
+                                    "type": "tool_call",
+                                    "status": "start",
+                                    "call_id": state["id"],
+                                    "name": tool_name,
+                                    "arguments": arguments_dict,
+                                }
+                            )
+                        future = executor.submit(self.tool_registry.execute, tool_name, arguments_dict)
+                        futures.append((state, arguments_dict, future))
+
+                    for state, arguments_dict, future in futures:
+                        tool_name = state.get("name") or ""
+                        try:
+                            execution: ToolExecution = future.result()
+                        except Exception as exc:  # pragma: no cover - defensive logging
+                            logging.exception("Tool execution failed: %s", exc)
+                            emit(
+                                {
+                                    "type": "error",
+                                    "message": f"Tool '{tool_name}' failed: {exc}",
+                                }
+                            )
+                            continue
+
+                        sanitized_content = self._sanitize_tool_content(execution.content)
+                        tool_calls.append(
+                            ToolCallRecord(
+                                name=execution.name,
+                                arguments=execution.arguments,
+                                output_preview=sanitized_content[:500],
+                            )
+                        )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": state["id"],
+                                "name": tool_name,
+                                "content": sanitized_content,
+                            }
+                        )
                         emit(
                             {
                                 "type": "tool_call",
-                                "status": "start",
+                                "status": "finish",
                                 "call_id": state["id"],
-                                "name": tool_name,
-                                "arguments": arguments_dict,
+                                "name": execution.name,
+                                "output": execution.content,
                             }
                         )
-                    execution: ToolExecution = self.tool_registry.execute(
-                        tool_name, arguments_dict
-                    )
-                    tool_calls.append(
-                        ToolCallRecord(
-                            name=execution.name,
-                            arguments=execution.arguments,
-                            output_preview=execution.content[:500],
-                        )
-                    )
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": state["id"],
-                            "name": tool_name,
-                            "content": execution.content,
-                        }
-                    )
-                    emit(
-                        {
-                            "type": "tool_call",
-                            "status": "finish",
-                            "call_id": state["id"],
-                            "name": execution.name,
-                            "output": execution.content,
-                        }
-                    )
                 continue
 
             answer = assistant_content
@@ -466,22 +505,84 @@ class ToolUseAgent:
                         feedback_lines.append(
                             f"Suggested query: {reflection.suggested_query}"
                         )
+                    if reflection.suggested_query:
+                        suggested_query = reflection.suggested_query.strip()
+                        if suggested_query:
+                            logging.info("Executing suggested follow-up query: %s", suggested_query)
+                            followup_call_id = f"reflection-followup-{reflection_attempts}"
+                            followup_arguments = {"query": suggested_query}
+                            messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": "",
+                                    "tool_calls": [
+                                        {
+                                            "id": followup_call_id,
+                                            "type": "function",
+                                            "function": {
+                                                "name": "web_search",
+                                                "arguments": json.dumps(followup_arguments),
+                                            },
+                                        }
+                                    ],
+                                }
+                            )
+                            emit(
+                                {
+                                    "type": "tool_call",
+                                    "status": "start",
+                                    "call_id": followup_call_id,
+                                    "name": "web_search",
+                                    "arguments": followup_arguments,
+                                }
+                            )
+                            try:
+                                execution = self.tool_registry.execute(
+                                    "web_search", {"query": suggested_query}
+                                )
+                                sanitized_content = self._sanitize_tool_content(execution.content)
+                                tool_calls.append(
+                                    ToolCallRecord(
+                                        name=execution.name,
+                                        arguments=execution.arguments,
+                                        output_preview=sanitized_content[:500],
+                                    )
+                                )
+                                messages.append(
+                                    {
+                                        "role": "tool",
+                                        "tool_call_id": followup_call_id,
+                                        "name": execution.name,
+                                        "content": sanitized_content,
+                                    }
+                                )
+                                emit(
+                                    {
+                                        "type": "tool_call",
+                                        "status": "finish",
+                                        "call_id": followup_call_id,
+                                        "name": execution.name,
+                                        "output": execution.content,
+                                    }
+                                )
+                            except Exception as exc:  # pragma: no cover - defensive logging
+                                logging.exception(
+                                    "Reflection follow-up tool execution failed: %s", exc
+                                )
+                                emit(
+                                    {
+                                        "type": "error",
+                                        "message": "Reflection follow-up tool execution failed.",
+                                    }
+                                )
+                                break
+                        continue
                     messages.append(
                         {
                             "role": "system",
                             "content": "\n".join(feedback_lines),
                         }
                     )
-                    if reflection.suggested_query:
-                        messages.append(
-                            {
-                                "role": "user",
-                                "content": (
-                                    "Follow the reflection guidance. "
-                                    f"Consider searching for: {reflection.suggested_query}"
-                                ),
-                            }
-                        )
                     continue
 
             break
@@ -490,7 +591,7 @@ class ToolUseAgent:
             logging.error("Agent failed to produce an answer within allotted turns.")
             raise RuntimeError("Agent could not generate a final answer.")
 
-        metadata = build_agent_metadata(refined_query, tool_calls, reflections)
+        metadata = build_agent_metadata(refined_query, tool_calls, reflections, provider=provider_info)
         emit(
             {
                 "type": "answer",
@@ -505,6 +606,7 @@ class ToolUseAgent:
             refined_query=refined_query,
             tool_calls=tool_calls,
             reflections=reflections,
+            provider=provider_info,
         )
 
     def _build_history_context(
@@ -578,3 +680,13 @@ class ToolUseAgent:
             current_tokens += line_tokens
         if chunk_lines:
             yield "\n".join(chunk_lines)
+
+    def _sanitize_tool_content(self, content: str) -> str:
+        if not content:
+            return content
+        trimmed = content
+        if count_tokens(trimmed) > self.TOOL_CONTENT_TOKEN_LIMIT:
+            trimmed = trim_to_tokens(trimmed, self.TOOL_CONTENT_TOKEN_LIMIT)
+        if len(trimmed) > self.TOOL_CONTENT_CHAR_LIMIT:
+            trimmed = trimmed[: self.TOOL_CONTENT_CHAR_LIMIT]
+        return trimmed

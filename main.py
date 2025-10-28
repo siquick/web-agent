@@ -57,7 +57,12 @@ def _build_response(
     object_name: str,
 ) -> Dict[str, Any]:
     created = int(time.time())
-    message_metadata = build_agent_metadata(result.refined_query, result.tool_calls, result.reflections)
+    message_metadata = build_agent_metadata(
+        result.refined_query,
+        result.tool_calls,
+        result.reflections,
+        provider=result.provider,
+    )
     choice = {
         "index": 0,
         "message": {
