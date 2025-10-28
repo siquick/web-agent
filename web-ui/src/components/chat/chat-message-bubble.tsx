@@ -1,12 +1,13 @@
+import { Loader2 } from "lucide-react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { cn } from "../../lib/utils";
 import { Avatar } from "../ui/avatar";
-import type { ChatMessage } from "./types";
+import type { ChatMessage, LiveToolCall, MessageMetadata } from "./types";
 
-const TOOL_SECTION_TITLE = "Tool usage";
+const TOOL_SECTION_TITLE = "Tool activity";
 
 const markdownComponents: Components = {
   p: ({ node, className, ...props }) => (
@@ -99,7 +100,8 @@ const markdownComponents: Components = {
       {...props}
     />
   ),
-  code: ({ node, inline, className, children = [], ...props }) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  code: ({ node, inline, className, children = [], ...props }: any) => {
     const inner = Array.isArray(children) ? children.join("") : String(children);
 
     if (inline) {
@@ -127,47 +129,76 @@ interface ChatMessageBubbleProps {
   message: ChatMessage;
 }
 
-function renderToolMetadata(message: ChatMessage) {
-  const metadata = message.metadata;
+function renderThinkingContent(message: ChatMessage) {
+  const thinking = message.thinking?.trim();
+  if (!thinking) {
+    return null;
+  }
+
+  return (
+    <details
+      className="mt-3 space-y-2 rounded-lg border border-border/70 bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground"
+      open={message.streaming ?? false}
+    >
+      <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-foreground/70">
+        Thinking
+      </summary>
+      <pre className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">{thinking}</pre>
+    </details>
+  );
+}
+
+function renderLiveToolCalls(calls?: LiveToolCall[], refinedQuery?: string | null) {
+  if (!calls || calls.length === 0) {
+    if (!refinedQuery) {
+      return null;
+    }
+    calls = [];
+  }
+
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-border/70 bg-muted/40 p-3 text-xs text-muted-foreground">
+      <p className="font-medium text-foreground">{TOOL_SECTION_TITLE}</p>
+      {refinedQuery ? (
+        <p className="rounded-md bg-background/70 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+          <span className="font-semibold text-foreground">Refined query:</span>{" "}
+          {refinedQuery}
+        </p>
+      ) : null}
+      {calls.length ? (
+        <ul className="space-y-1">
+          {calls.map((call) => (
+            <li key={call.id} className="flex items-center justify-between rounded-md bg-background/70 px-3 py-2">
+              <span className="font-semibold text-foreground">{call.name}</span>
+              <span
+                className={cn(
+                  "text-[11px] font-medium uppercase tracking-wide",
+                  call.status === "running" ? "text-amber-600" : "text-emerald-600",
+                )}
+              >
+                {call.status === "running" ? "Running" : "Completed"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function renderFinalMetadata(metadata?: MessageMetadata) {
   if (!metadata) {
     return null;
   }
 
-  const hasTools = metadata.tool_calls && metadata.tool_calls.length > 0;
   const hasReflections = metadata.reflections && metadata.reflections.length > 0;
 
-  if (!hasTools && !hasReflections && !metadata.refined_query) {
+  if (!hasReflections) {
     return null;
   }
 
   return (
     <div className="mt-3 space-y-2 rounded-lg border border-border/70 bg-muted/40 p-3 text-sm text-muted-foreground">
-      {metadata.refined_query ? (
-        <p>
-          <span className="font-medium text-foreground">Refined query:</span>{" "}
-          {metadata.refined_query}
-        </p>
-      ) : null}
-      {hasTools ? (
-        <div className="space-y-2">
-          <p className="font-medium text-foreground">{TOOL_SECTION_TITLE}</p>
-          <ul className="space-y-1.5">
-            {metadata.tool_calls.map((call, index) => (
-              <li key={`${call.name}-${index}`} className="rounded-md bg-background/80 p-2">
-                <p className="font-semibold text-foreground">{call.name}</p>
-                <pre className="mt-1 overflow-x-auto rounded bg-muted/70 p-2 text-xs">
-                  {JSON.stringify(call.arguments, null, 2)}
-                </pre>
-                {call.output_preview ? (
-                  <p className="mt-1 text-xs italic leading-relaxed text-muted-foreground">
-                    {call.output_preview}
-                  </p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
       {hasReflections ? (
         <div className="space-y-2">
           <p className="font-medium text-foreground">Reflections</p>
@@ -225,22 +256,43 @@ export function ChatMessageBubble({ message }: ChatMessageBubbleProps) {
     >
       {isAssistant ? <Avatar fallback="AI" /> : null}
       <div
-        className={cn(
-          "max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm sm:max-w-[75%]",
-          isAssistant
-            ? "bg-card text-card-foreground"
-            : "bg-primary text-primary-foreground",
-        )}
+      className={cn(
+        "max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm sm:max-w-[75%]",
+        isAssistant
+          ? "bg-card text-card-foreground"
+          : "bg-primary text-primary-foreground",
+      )}
+    >
+      {isAssistant ? (
+        <>
+          {renderThinkingContent(message)}
+          {renderLiveToolCalls(message.liveToolCalls, message.metadata?.refined_query ?? null)}
+        </>
+      ) : null}
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={markdownComponents}
+        className="markdown"
       >
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={markdownComponents}
-          className="markdown"
-        >
-          {message.content}
-        </ReactMarkdown>
-        {isAssistant ? renderToolMetadata(message) : null}
-      </div>
+        {message.content}
+      </ReactMarkdown>
+      {message.error ? (
+        <div className="mt-3 rounded-lg border border-destructive/60 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          {message.error}
+        </div>
+      ) : null}
+      {isAssistant ? (
+        <>
+          {message.streaming ? (
+            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Generating…
+            </div>
+          ) : null}
+          {renderFinalMetadata(message.metadata)}
+        </>
+      ) : null}
+    </div>
       {isUser ? <Avatar fallback="You" className="bg-primary text-primary-foreground" /> : null}
     </div>
   );

@@ -1,17 +1,25 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
-from typing import Any, Dict, List, Tuple
+from queue import SimpleQueue
+from threading import Thread
+from typing import Any, Dict, Iterable, List, Tuple
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from web_agent import AgentResult, ToolUseAgent
-from web_agent.ai.llm import DEFAULT_CHAT_MODEL, is_supported_chat_model
+from web_agent import AgentResult, ToolUseAgent, build_agent_metadata
+from web_agent.ai.llm import (
+    DEFAULT_CHAT_MODEL,
+    is_supported_chat_model,
+    openai_model_payload,
+    supported_model_ids,
+)
 from web_agent.ai.utils import content_to_text
 from web_agent.api.schemas import ChatMessage, ChatRequest, QueryRequest
 
@@ -20,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Web Agent API",
-    description="FastAPI service exposing agentic tooling over the Qwen 3 32B model via Hugging Face Inference.",
+    description="FastAPI service exposing agentic tooling over OpenAI-compatible providers.",
     version="0.1.0",
 )
 
@@ -42,31 +50,6 @@ app.add_middleware(
 agent = ToolUseAgent()
 
 
-def _format_tool_metadata(result: AgentResult) -> Dict[str, Any]:
-    tool_meta = [
-        {
-            "name": call.name,
-            "arguments": call.arguments,
-            "output_preview": call.output_preview,
-        }
-        for call in result.tool_calls
-    ]
-    reflection_meta = [
-        {
-            "requires_more_context": reflection.requires_more_context,
-            "reason": reflection.reason,
-            "follow_up_instruction": reflection.follow_up_instruction,
-            "suggested_query": reflection.suggested_query,
-        }
-        for reflection in result.reflections
-    ]
-    return {
-        "refined_query": result.refined_query,
-        "tool_calls": tool_meta,
-        "reflections": reflection_meta,
-    }
-
-
 def _build_response(
     result: AgentResult,
     *,
@@ -74,7 +57,7 @@ def _build_response(
     object_name: str,
 ) -> Dict[str, Any]:
     created = int(time.time())
-    message_metadata = _format_tool_metadata(result)
+    message_metadata = build_agent_metadata(result.refined_query, result.tool_calls, result.reflections)
     choice = {
         "index": 0,
         "message": {
@@ -126,9 +109,79 @@ def _extract_question_and_history(
     return question, history
 
 
+def _require_supported_model(model: str) -> None:
+    if is_supported_chat_model(model):
+        return
+    supported = ", ".join(supported_model_ids())
+    raise HTTPException(
+        status_code=400,
+        detail=f"Unsupported model '{model}'. Choose one of: {supported}.",
+    )
+
+
+def _encode_sse(event: Dict[str, Any]) -> str:
+    return f"data: {json.dumps(event)}\n\n"
+
+
+def _agent_event_stream(
+    *,
+    question: str,
+    history: List[Dict[str, Any]],
+    model: str,
+) -> Iterable[str]:
+    queue: SimpleQueue[Any] = SimpleQueue()
+    sentinel: object = object()
+
+    def handle_event(event: Dict[str, Any]) -> None:
+        queue.put(event)
+
+    def run_agent() -> None:
+        try:
+            result = agent.run(
+                question=question,
+                chat_history=history,
+                model=model,
+                event_handler=handle_event,
+            )
+            response_payload = _build_response(result, model=model, object_name="chat.completion")
+            queue.put({"type": "final_response", "response": response_payload})
+        except Exception as exc:  # pragma: no cover - surfaces runtime issues
+            logger.exception("Agent execution failed during streaming: %s", exc)
+            queue.put({"type": "error", "message": "Agent failed to generate a response."})
+        finally:
+            queue.put(sentinel)
+
+    Thread(target=run_agent, daemon=True).start()
+
+    while True:
+        event = queue.get()
+        if event is sentinel:
+            break
+        yield _encode_sse(event)
+    yield _encode_sse({"type": "done"})
+
+
+def _run_agent(
+    *,
+    question: str,
+    history: List[Dict[str, Any]],
+    model: str,
+) -> AgentResult:
+    try:
+        return agent.run(question=question, chat_history=history, model=model)
+    except Exception as exc:  # pragma: no cover - surfaces LLM/tool issues
+        logger.exception("Agent execution failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Agent failed to generate a response.") from exc
+
+
 @app.get("/health")
 def health() -> Dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/v1/models")
+def list_models() -> Dict[str, Any]:
+    return openai_model_payload()
 
 
 @app.post("/v1/query")
@@ -136,11 +189,7 @@ def query_endpoint(payload: QueryRequest):
     if payload.stream:
         raise HTTPException(status_code=400, detail="Streaming is not supported yet.")
 
-    if not is_supported_chat_model(payload.model):
-        raise HTTPException(
-            status_code=400,
-            detail=f"This service currently supports only the {DEFAULT_CHAT_MODEL} model.",
-        )
+    _require_supported_model(payload.model)
 
     if isinstance(payload.input, str):
         question = payload.input.strip()
@@ -150,12 +199,7 @@ def query_endpoint(payload: QueryRequest):
     else:
         question, history = _extract_question_and_history(payload.input)
 
-    try:
-        result = agent.run(question=question, chat_history=history)
-    except Exception as exc:  # pragma: no cover - surfaces LLM/tool issues
-        logger.exception("Agent execution failed: %s", exc)
-        raise HTTPException(status_code=500, detail="Agent failed to generate a response.") from exc
-
+    result = _run_agent(question=question, history=history, model=payload.model)
     response_payload = _build_response(result, model=payload.model, object_name="response")
     return JSONResponse(content=response_payload)
 
@@ -165,19 +209,24 @@ def chat_endpoint(payload: ChatRequest):
     if payload.stream:
         raise HTTPException(status_code=400, detail="Streaming is not supported yet.")
 
-    if not is_supported_chat_model(payload.model):
-        raise HTTPException(
-            status_code=400,
-            detail=f"This service currently supports only the {DEFAULT_CHAT_MODEL} model.",
-        )
+    _require_supported_model(payload.model)
 
     question, history = _extract_question_and_history(payload.messages)
 
-    try:
-        result = agent.run(question=question, chat_history=history)
-    except Exception as exc:  # pragma: no cover - surfaces LLM/tool issues
-        logger.exception("Agent execution failed: %s", exc)
-        raise HTTPException(status_code=500, detail="Agent failed to generate a response.") from exc
+    result = _run_agent(question=question, history=history, model=payload.model)
+    response_payload = _build_response(result, model=payload.model, object_name="chat.completion")
+    return JSONResponse(content=response_payload)
 
+
+@app.post("/v1/chat/completions")
+def chat_completions_endpoint(payload: ChatRequest):
+    _require_supported_model(payload.model)
+    question, history = _extract_question_and_history(payload.messages)
+
+    if payload.stream:
+        event_iterable = _agent_event_stream(question=question, history=history, model=payload.model)
+        return StreamingResponse(event_iterable, media_type="text/event-stream")
+
+    result = _run_agent(question=question, history=history, model=payload.model)
     response_payload = _build_response(result, model=payload.model, object_name="chat.completion")
     return JSONResponse(content=response_payload)

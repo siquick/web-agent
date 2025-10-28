@@ -2,7 +2,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from web_agent.ai.llm import (
     DEFAULT_CHAT_MODEL,
@@ -41,6 +41,35 @@ class AgentResult:
     refined_query: str
     tool_calls: List[ToolCallRecord]
     reflections: List[ReflectionRecord]
+
+
+def build_agent_metadata(
+    refined_query: str,
+    tool_calls: Iterable[ToolCallRecord],
+    reflections: Iterable[ReflectionRecord],
+) -> Dict[str, Any]:
+    tool_meta = [
+        {
+            "name": call.name,
+            "arguments": call.arguments,
+            "output_preview": call.output_preview,
+        }
+        for call in tool_calls
+    ]
+    reflection_meta = [
+        {
+            "requires_more_context": reflection.requires_more_context,
+            "reason": reflection.reason,
+            "follow_up_instruction": reflection.follow_up_instruction,
+            "suggested_query": reflection.suggested_query,
+        }
+        for reflection in reflections
+    ]
+    return {
+        "refined_query": refined_query,
+        "tool_calls": tool_meta,
+        "reflections": reflection_meta,
+    }
 
 
 class ReflectionAgent:
@@ -171,18 +200,38 @@ class ToolUseAgent:
             self.tool_registry = tool_registry
         else:
             self.tool_registry = default_tooling(tools or [])
-        self.reflection_agent = reflection_agent or ReflectionAgent(model=model)
+        canonical_model = canonical_chat_model(model)
+        if reflection_agent:
+            reflection_agent.model = canonical_model
+            self.reflection_agent = reflection_agent
+        else:
+            self.reflection_agent = ReflectionAgent(model=canonical_model)
         self.max_turns = max_turns
         self.max_reflection_rounds = max_reflection_rounds
-        self.model = canonical_chat_model(model)
+        self.default_model = canonical_model
 
     def run(
         self,
         question: str,
         chat_history: Optional[List[Dict[str, Any]]] = None,
+        *,
+        model: Optional[str] = None,
+        event_handler: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> AgentResult:
+        active_model = canonical_chat_model(model or self.default_model)
+        if self.reflection_agent.model != active_model:
+            self.reflection_agent.model = active_model
         refined_query = question
         history_context = self._build_history_context(chat_history or [])
+
+        def emit(event: Dict[str, Any]) -> None:
+            if event_handler:
+                try:
+                    event_handler(event)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logging.warning("Agent event handler raised an exception: %s", exc)
+
+        emit({"type": "run", "status": "start", "model": active_model, "question": question})
 
         messages: List[Dict[str, Any]] = [
             {
@@ -206,41 +255,157 @@ class ToolUseAgent:
         reflection_attempts = 0
 
         for turn in range(self.max_turns):
-            response = llm_chat(
+            stream = llm_chat(
                 messages,
                 tools=self.tool_registry.definitions(),
-                model=self.model,
-                stream=False,
+                model=active_model,
+                stream=True,
                 temperature=0.1,
                 top_p=0.95,
                 max_tokens=2000,
             )
 
-            choice = response.choices[0]
-            message = choice.message
+            assistant_content = ""
+            assistant_role = "assistant"
+            tool_call_states: Dict[int, Dict[str, Any]] = {}
 
-            if getattr(message, "tool_calls", None):
-                assistant_message = {
-                    "role": "assistant",
-                    "content": message.content or "",
-                    "tool_calls": [
+            def _parse_arguments(raw: str) -> Dict[str, Any]:
+                if not raw:
+                    return {}
+                candidate = raw.strip()
+                if not candidate:
+                    return {}
+
+                def _patch_brackets(value: str) -> List[str]:
+                    attempts: List[str] = [value]
+                    brace_delta = value.count("{") - value.count("}")
+                    bracket_delta = value.count("[") - value.count("]")
+                    patched = value
+                    if brace_delta > 0:
+                        patched = patched + ("}" * brace_delta)
+                        attempts.append(patched)
+                    if bracket_delta > 0:
+                        patched = patched + ("]" * bracket_delta)
+                        attempts.append(patched)
+                    if attempts[-1].endswith(","):
+                        attempts.append(attempts[-1].rstrip(",") + "}")
+                    return attempts
+
+                attempts = _patch_brackets(candidate)
+                for attempt in attempts:
+                    try:
+                        return json.loads(attempt)
+                    except json.JSONDecodeError:
+                        continue
+
+                logging.warning("Failed to parse tool arguments: %s", raw)
+                return {}
+
+            for chunk in stream:
+                if not getattr(chunk, "choices", None):
+                    continue
+                choice = chunk.choices[0]
+                delta = getattr(choice, "delta", None)
+                if delta is None:
+                    continue
+
+                if getattr(delta, "role", None):
+                    assistant_role = delta.role
+
+                content_piece = getattr(delta, "content", None)
+                if content_piece:
+                    if isinstance(content_piece, list):
+                        for part in content_piece:
+                            if isinstance(part, dict):
+                                text_value = str(part.get("text", ""))
+                            else:
+                                text_value = str(part)
+                            if not text_value:
+                                continue
+                            assistant_content += text_value
+                            emit({"type": "answer", "status": "stream", "text": text_value})
+                    else:
+                        assistant_content += str(content_piece)
+                        emit({"type": "answer", "status": "stream", "text": str(content_piece)})
+
+                tool_call_deltas = getattr(delta, "tool_calls", None) or []
+                for tool_delta in tool_call_deltas:
+                    index = getattr(tool_delta, "index", 0)
+                    state = tool_call_states.setdefault(
+                        index,
                         {
-                            "id": tool_call.id,
-                            "type": tool_call.type,
-                            "function": {
-                                "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments,
-                            },
-                        }
-                        for tool_call in message.tool_calls
-                    ],
-                }
-                messages.append(assistant_message)
+                            "id": getattr(tool_delta, "id", None) or f"tool_call_{index}",
+                            "name": None,
+                            "arguments": "",
+                            "emitted_start": False,
+                        },
+                    )
+                    if getattr(tool_delta, "id", None):
+                        state["id"] = tool_delta.id
+                    function = getattr(tool_delta, "function", None)
+                    if function:
+                        if getattr(function, "name", None):
+                            state["name"] = function.name
+                        if getattr(function, "arguments", None):
+                            state["arguments"] += function.arguments
+                    if not state["emitted_start"] and state.get("name"):
+                        emit(
+                            {
+                                "type": "tool_call",
+                                "status": "start",
+                                "call_id": state["id"],
+                                "name": state["name"],
+                                "arguments": {},
+                            }
+                        )
+                        state["emitted_start"] = True
 
-                for tool_call in message.tool_calls:
-                    arguments = json.loads(tool_call.function.arguments or "{}")
+                if choice.finish_reason in {"stop", "tool_calls"}:
+                    # The stream ends after the API reports a finish_reason
+                    break
+
+            assistant_message: Dict[str, Any] = {
+                "role": assistant_role,
+                "content": assistant_content,
+            }
+
+            sorted_tool_states = [
+                tool_call_states[index] for index in sorted(tool_call_states.keys())
+            ]
+            if sorted_tool_states:
+                assistant_message["tool_calls"] = [
+                    {
+                        "id": state["id"],
+                        "type": "function",
+                        "function": {
+                            "name": state.get("name") or "",
+                            "arguments": state.get("arguments") or "{}",
+                        },
+                    }
+                    for state in sorted_tool_states
+                ]
+
+            messages.append(assistant_message)
+
+            if sorted_tool_states:
+                for state in sorted_tool_states:
+                    arguments_dict = _parse_arguments(state.get("arguments") or "{}")
+                    tool_name = state.get("name") or ""
+                    if not tool_name:
+                        logging.warning("Tool call missing function name; skipping execution.")
+                        continue
+                    if not state.get("emitted_start"):
+                        emit(
+                            {
+                                "type": "tool_call",
+                                "status": "start",
+                                "call_id": state["id"],
+                                "name": tool_name,
+                                "arguments": arguments_dict,
+                            }
+                        )
                     execution: ToolExecution = self.tool_registry.execute(
-                        tool_call.function.name, arguments
+                        tool_name, arguments_dict
                     )
                     tool_calls.append(
                         ToolCallRecord(
@@ -252,15 +417,23 @@ class ToolUseAgent:
                     messages.append(
                         {
                             "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "name": tool_call.function.name,
+                            "tool_call_id": state["id"],
+                            "name": tool_name,
                             "content": execution.content,
+                        }
+                    )
+                    emit(
+                        {
+                            "type": "tool_call",
+                            "status": "finish",
+                            "call_id": state["id"],
+                            "name": execution.name,
+                            "output": execution.content,
                         }
                     )
                 continue
 
-            answer = message.content or ""
-            messages.append({"role": "assistant", "content": answer})
+            answer = assistant_content
 
             should_reflect = tool_calls and reflection_attempts < self.max_reflection_rounds
             if should_reflect:
@@ -272,6 +445,15 @@ class ToolUseAgent:
 
                 if reflection.requires_more_context and reflection_attempts <= self.max_reflection_rounds:
                     logging.info("Reflection requested additional context.")
+                    emit(
+                        {
+                            "type": "reflection",
+                            "requires_more_context": reflection.requires_more_context,
+                            "reason": reflection.reason,
+                            "follow_up_instruction": reflection.follow_up_instruction,
+                            "suggested_query": reflection.suggested_query,
+                        }
+                    )
                     feedback_lines = [
                         "Reflection feedback indicates more work is needed.",
                         f"Reason: {reflection.reason}",
@@ -307,6 +489,16 @@ class ToolUseAgent:
         if answer is None:
             logging.error("Agent failed to produce an answer within allotted turns.")
             raise RuntimeError("Agent could not generate a final answer.")
+
+        metadata = build_agent_metadata(refined_query, tool_calls, reflections)
+        emit(
+            {
+                "type": "answer",
+                "status": "final",
+                "text": answer,
+                "metadata": metadata,
+            }
+        )
 
         return AgentResult(
             answer=answer,

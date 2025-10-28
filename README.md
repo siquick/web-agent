@@ -1,12 +1,12 @@
 ## Web Agent API
 
-FastAPI service that wraps a lightweight agent capable of web-grounded research using models served via Hugging Face’s OpenAI-compatible router. It exposes OpenAI-style `/v1/query` and `/v1/chat` endpoints, plus a CLI for conversational testing.
+FastAPI service that wraps a lightweight agent capable of web-grounded research against any OpenAI-compatible provider. It exposes `/v1/query`, `/v1/chat`, and `/v1/chat/completions` (streaming) endpoints, plus a CLI for conversational testing.
 
 ---
 
 ### Features
 
-- **OpenAI-compatible interface** – `/v1/query` and `/v1/chat` mirror the official schema for straightforward client integration.
+- **OpenAI-compatible interface** – `/v1/query`, `/v1/chat`, and `/v1/chat/completions` mirror the official schema for straightforward client integration.
 - **Tool-aware agent** – Orchestrates web search, URL content fetching, time, and future tools via dynamic tool definitions.
 - **Reflection loop** – Optional self-check pass to demand more evidence before finalising answers.
 - **Conversation summarisation** – Maintains a compact memory using the same LLM to avoid context overflows.
@@ -48,18 +48,18 @@ FastAPI service that wraps a lightweight agent capable of web-grounded research 
 - Python 3.12+
 - [`uv`](https://github.com/astral-sh/uv) for dependency and environment management
 - API credentials:
-  - `HF_TOKEN` – Hugging Face Inference API token with access to your chosen hosted model
-  - `EXA_API_KEY` – Exa search key (for web tool)
-  - 'OPENROUTER_API_KEY' - Openrouter API key with access to your chosen modek
+  - `OPENROUTER_API_KEY` – OpenRouter access token (if you enable the OpenRouter provider)
+  - `HF_TOKEN` – Hugging Face Inference API token (if you enable the Hugging Face router provider)
+  - `EXA_API_KEY` – Exa search key (for the web-search tool)
   - Any additional tool keys you enable
-  - Note you need atleast one of HF_TOKEN or OPENROUTER_API_KEY
+  - At least one OpenAI-compatible provider token (`OPENROUTER_API_KEY`, `HF_TOKEN`, etc.) must be present.
 
 Create a `.env` (already gitignored) to populate the tokens, for example:
 
 ```
-HF_TOKEN=hf_xxx
+OPENROUTER_API_KEY=sk-or-...
+HF_TOKEN=
 EXA_API_KEY=exa_xxx
-OPENROUTER_API_KEY=
 ```
 
 ---
@@ -137,13 +137,68 @@ Environment overrides (add to `web-ui/.env` or export before running Vite):
 
 ### Model Configuration
 
-- The API speaks the OpenAI `chat/completions` schema end‑to‑end. You can point it at any router or gateway that exposes that surface: Hugging Face Inference, OpenRouter, Ollama, or a self-hosted OpenAI-compatible stack.
-- Configure the backend by wiring the environment variables consumed in `web_agent/ai/llm.py`. Examples:
-  - **OpenRouter** – set `ROUTER_BASE_URL=https://openrouter.ai/api/v1`, `ROUTER_MODEL=qwen/qwen3-32b`, and `OPENROUTER_API_KEY=<token>`.
-  - **Hugging Face Router** – set `ROUTER_BASE_URL=https://router.huggingface.co/v1`, `ROUTER_MODEL=Qwen/Qwen3-32B:groq`, and `ROUTER_KEY=HF_TOKEN`.
-  - **Ollama (local)** – set `ROUTER_BASE_URL=http://127.0.0.1:11434/v1`, `ROUTER_MODEL=qwen3:1.7b`, and leave the key blank.
-- Whatever router you choose, keep the `model` parameter sent by the CLI/web UI in sync with `ROUTER_MODEL` to avoid validation errors.
-- Because the interface is standardised, swapping providers usually means updating `ROUTER_BASE_URL`, `ROUTER_MODEL`, and the token—no code changes required.
+The backend now discovers providers and models from JSON environment variables, making it easy to switch between routers or offer multiple options to the UI:
+
+- `WEB_AGENT_PROVIDERS` – JSON array describing OpenAI-compatible endpoints (defaults include OpenRouter and the Hugging Face router).
+- `WEB_AGENT_MODELS` – JSON array mapping models to providers.
+- `WEB_AGENT_DEFAULT_MODEL` – Optional model `id` to use when the client omits `model` (defaults to the first configured model).
+
+Example `.env` fragment:
+
+```env
+OPENROUTER_API_KEY=sk-or-...
+
+WEB_AGENT_PROVIDERS=[
+  {
+    "id": "openrouter",
+    "label": "OpenRouter",
+    "base_url": "https://openrouter.ai/api/v1",
+    "api_key_envs": ["OPENROUTER_API_KEY"],
+    "supports_streaming": true
+  },
+  {
+    "id": "huggingface",
+    "label": "Hugging Face Router",
+    "base_url": "https://router.huggingface.co/v1",
+    "api_key_envs": ["HF_TOKEN"],
+    "supports_streaming": true
+  }
+]
+
+WEB_AGENT_MODELS=[
+  {
+    "id": "openrouter/qwen-3-32b",
+    "provider_id": "openrouter",
+    "model_name": "qwen/qwen3-32b",
+    "display_name": "Qwen 3 32B (OpenRouter)"
+  },
+  {
+    "id": "hf/qwen-3-32b",
+    "provider_id": "huggingface",
+    "model_name": "Qwen/Qwen3-32B:groq",
+    "display_name": "Qwen 3 32B (Hugging Face)"
+  }
+]
+
+WEB_AGENT_DEFAULT_MODEL=openrouter/qwen-3-32b
+```
+
+If you omit these variables the API defaults to OpenRouter’s `qwen/qwen3-32b` model (requires `OPENROUTER_API_KEY`). The `/v1/models` endpoint surfaces the active list for clients such as the React UI.
+
+Each provider entry supports:
+
+- `id` / `label` – Identifier and human-readable name.
+- `base_url` – OpenAI-compatible REST endpoint.
+- `api_key_envs` – One or more environment variables that hold the API key.
+- `supports_streaming` – Optional flag (default `true`) to disable streaming for that provider.
+
+Each model entry maps to a provider and controls:
+
+- `id` – Stable identifier returned to clients.
+- `provider_id` – Which provider should handle requests.
+- `model_name` – The provider-specific model name sent in `chat.completions`.
+- `display_name`/`description` – Optional UI labels.
+- `supports_streaming` – Overrides the provider-level flag for a single model.
 
 ---
 
@@ -172,6 +227,6 @@ Environment overrides (add to `web-ui/.env` or export before running Vite):
 
 ### Notes
 
-- Model traffic routes through Hugging Face’s OpenAI-compatible REST API. Set `ROUTER_MODEL` (defaults to `Qwen/Qwen3-32B:cerebras`) to any model listed in the [Hugging Face Inference catalog](https://huggingface.co/inference/models) that supports the chat completions interface.
+- Model traffic routes through whichever provider/model pair you set in `WEB_AGENT_PROVIDERS` / `WEB_AGENT_MODELS`. By default the service targets OpenRouter’s `qwen/qwen3-32b`.
 - Reflection is constrained to a single additional turn to limit token and cost overhead. Tune `max_reflection_rounds` on `ToolUseAgent` if you need deeper self-critique.
 - Summaries are only generated after a minimum conversation length to save tokens on short interactions.

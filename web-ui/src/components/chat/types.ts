@@ -4,6 +4,14 @@ export interface ToolCallMetadata {
   output_preview?: string;
 }
 
+export interface LiveToolCall {
+  id: string;
+  name: string;
+  status: "running" | "completed";
+  arguments: Record<string, unknown>;
+  output?: string;
+}
+
 export interface ReflectionMetadata {
   requires_more_context: boolean;
   reason?: string;
@@ -24,4 +32,17 @@ export type ChatMessage = {
   role: ChatRole;
   content: string;
   metadata?: MessageMetadata;
+  thinking?: string;
+  streaming?: boolean;
+  liveToolCalls?: LiveToolCall[];
+  error?: string;
 };
+
+export interface ModelOption {
+  id: string;
+  displayName: string;
+  description?: string;
+  providerLabel?: string;
+  providerId?: string;
+  supportsStreaming: boolean;
+}
