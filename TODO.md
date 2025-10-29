@@ -2,9 +2,8 @@
 
 ## API
 
-- Stream support on completion
+- Add OCR tool for uploaded images and PDFs - use Deepseek OCR
 
 ## UI
 
-- Can we use https://github.com/huggingface/chat-ui ?  
-- How to stream in tool calls as they're happening  s
+- Allow PDF and image uploads

@@ -6,11 +6,13 @@ FastAPI service that wraps a lightweight agent capable of web-grounded research 
 
 ### Features
 
-- **OpenAI-compatible interface** – `/v1/query`, `/v1/chat`, and `/v1/chat/completions` mirror the official schema for straightforward client integration.
-- **Tool-aware agent** – Orchestrates web search, URL content fetching, time, and future tools via dynamic tool definitions.
-- **Reflection loop** – Optional self-check pass to demand more evidence before finalising answers.
-- **Conversation summarisation** – Maintains a compact memory using the same LLM to avoid context overflows.
-- **Interactive CLI** – `make chat` spins up a local terminal client that mirrors the API behaviour.
+- **OpenAI-compatible API** – `/v1/query`, `/v1/chat`, and streaming `/v1/chat/completions` follow the OpenAI schema so any compatible client (including the bundled React UI) works out of the box.
+- **Dynamic multi-provider routing** – Configure Hugging Face, OpenRouter, or any other OpenAI-style endpoint via JSON env vars; the UI surfaces a live model selector fed by `/v1/models`.
+- **Parallel, tool-aware agent** – Web search, URL fetch, and time tools execute in parallel when the model issues multiple calls, returning structured metadata for the UI.
+- **Reflection-driven follow-ups** – A reflection pass audits tool coverage and, when gaps are detected, automatically runs the suggested follow-up query before finalising the answer.
+- **Streaming UX** – The web UI streams tokens in real time, shows `<thinking>` reasoning, live tool status, provider badges, and lets users stop a response mid-flight.
+- **Conversation summarisation** – Multi-turn chats stay within context limits via rolling summaries maintained by the same LLM.
+- **Interactive CLI** – `make chat` provides a terminal client that mirrors the REST contract for quick testing.
 
 ---
 
@@ -25,7 +27,7 @@ FastAPI service that wraps a lightweight agent capable of web-grounded research 
 │   ├── agent.py            # Reflection-enabled tool-use agent
 │   ├── ai/
 │   │   ├── __init__.py
-│   │   ├── llm.py          # Hugging Face router integration + helpers
+│   │   ├── llm.py          # Multi-provider OpenAI client configuration helpers
 │   │   ├── prompts.py      # Prompt templates
 │   │   ├── system_prompts.py
 │   │   ├── utils.py        # Message content helpers
@@ -95,7 +97,7 @@ OpenAPI-style requests (example with curl):
 curl -X POST http://127.0.0.1:8000/v1/chat \
   -H "Content-Type: application/json" \
   -d '{
-        "model": "Qwen/Qwen3-32B:groq",
+        "model": "huggingface/openai-gpt-oss-120b-groq",
         "messages": [
           {"role": "system", "content": "You are a helpful assistant."},
           {"role": "user", "content": "Summarise the latest MPC news."}
@@ -120,6 +122,7 @@ Configure `WEB_AGENT_API_URL` or `WEB_AGENT_SYSTEM_PROMPT` in `.env` to point th
 
 - Requires Node 22.x and [pnpm](https://pnpm.io/) (the project declares both in `web-ui/package.json`).
 - The UI expects the FastAPI server to be running and reachable at the URL exposed via `VITE_WEB_AGENT_API_URL` (defaults to `http://127.0.0.1:8000`).
+- Features include a live model/router selector, streaming token display with `<thinking>` sections, real-time tool activity (including reflection follow-ups), and a unified Send/Stop control for interrupting responses.
 
 ```bash
 cd web-ui
@@ -137,11 +140,11 @@ Environment overrides (add to `web-ui/.env` or export before running Vite):
 
 ### Model Configuration
 
-The backend now discovers providers and models from JSON environment variables, making it easy to switch between routers or offer multiple options to the UI:
+The backend discovers providers and models from JSON environment variables, so you can mix-and-match routers or expose multiple choices to the UI without code changes:
 
-- `WEB_AGENT_PROVIDERS` – JSON array describing OpenAI-compatible endpoints (defaults include OpenRouter and the Hugging Face router).
-- `WEB_AGENT_MODELS` – JSON array mapping models to providers.
-- `WEB_AGENT_DEFAULT_MODEL` – Optional model `id` to use when the client omits `model` (defaults to the first configured model).
+- `WEB_AGENT_PROVIDERS` – JSON array describing OpenAI-compatible endpoints (defaults include Hugging Face and OpenRouter).
+- `WEB_AGENT_MODELS` – JSON array mapping models to providers (defaults ship with Hugging Face GPT-OSS/Qwen variants plus OpenRouter Qwen).
+- `WEB_AGENT_DEFAULT_MODEL` – Optional model `id` to use when the client omits `model` (defaults to `huggingface/openai-gpt-oss-120b-groq` when available).
 
 Example `.env` fragment:
 
@@ -167,20 +170,44 @@ WEB_AGENT_PROVIDERS=[
 
 WEB_AGENT_MODELS=[
   {
+    "id": "huggingface/openai-gpt-oss-120b-groq",
+    "provider_id": "huggingface",
+    "model_name": "openai/gpt-oss-120b:groq",
+    "display_name": "GPT-OSS 120B (HF · Groq)"
+  },
+  {
+    "id": "huggingface/openai-gpt-oss-120b-cerebras",
+    "provider_id": "huggingface",
+    "model_name": "openai/gpt-oss-120b:cerebras",
+    "display_name": "GPT-OSS 120B (HF · Cerebras)"
+  },
+  {
+    "id": "huggingface/qwen3-32b-groq",
+    "provider_id": "huggingface",
+    "model_name": "Qwen/Qwen3-32B:groq",
+    "display_name": "Qwen 3 32B (HF · Groq)"
+  },
+  {
+    "id": "huggingface/qwen3-32b-cerebras",
+    "provider_id": "huggingface",
+    "model_name": "Qwen/Qwen3-32B:cerebras",
+    "display_name": "Qwen 3 32B (HF · Cerebras)"
+  },
+  {
+    "id": "huggingface/moonshotai-kimi-k2-instruct-0905-groq",
+    "provider_id": "huggingface",
+    "model_name": "moonshotai/Kimi-K2-Instruct-0905:groq",
+    "display_name": "Kimi K2 Instruct (HF · Groq)"
+  },
+  {
     "id": "openrouter/qwen-3-32b",
     "provider_id": "openrouter",
     "model_name": "qwen/qwen3-32b",
     "display_name": "Qwen 3 32B (OpenRouter)"
-  },
-  {
-    "id": "hf/qwen-3-32b",
-    "provider_id": "huggingface",
-    "model_name": "Qwen/Qwen3-32B:groq",
-    "display_name": "Qwen 3 32B (Hugging Face)"
   }
 ]
 
-WEB_AGENT_DEFAULT_MODEL=openrouter/qwen-3-32b
+WEB_AGENT_DEFAULT_MODEL=huggingface/openai-gpt-oss-120b-groq
 ```
 
 If you omit these variables the API defaults to OpenRouter’s `qwen/qwen3-32b` model (requires `OPENROUTER_API_KEY`). The `/v1/models` endpoint surfaces the active list for clients such as the React UI.
@@ -227,6 +254,7 @@ Each model entry maps to a provider and controls:
 
 ### Notes
 
-- Model traffic routes through whichever provider/model pair you set in `WEB_AGENT_PROVIDERS` / `WEB_AGENT_MODELS`. By default the service targets OpenRouter’s `qwen/qwen3-32b`.
-- Reflection is constrained to a single additional turn to limit token and cost overhead. Tune `max_reflection_rounds` on `ToolUseAgent` if you need deeper self-critique.
+- Model traffic routes through whichever provider/model pair you set in `WEB_AGENT_PROVIDERS` / `WEB_AGENT_MODELS`. The built-in defaults favour Hugging Face’s GPT-OSS 120B (Groq backend) when available.
+- Reflection currently performs at most one extra pass; adjust `max_reflection_rounds` on `ToolUseAgent` if you need deeper audits.
+- Tool outputs are truncated (token and character caps) before being sent back to the LLM to avoid `413 Request Entity Too Large` responses.
 - Summaries are only generated after a minimum conversation length to save tokens on short interactions.
